@@ -1,7 +1,8 @@
 mod proxy_server;
-fn main(){
 
+fn main() {
     // Run proxy
-    proxy_server::run_proxy_server();
-
+    if let Err(e) = proxy_server::run_proxy_server() {
+        eprintln!("Server error: {}", e);
+    }
 }

@@ -1,40 +1,30 @@
-use actix_web::{http::StatusCode, web, HttpRequest, HttpResponse, Responder, ResponseError}; 
+use actix_web::{web, HttpRequest, HttpResponse, Responder}; 
 use std::collections::HashMap;
+use std::fs;
 
-
-const VERIFICATION_PAGE: &str = r#"
-        <html>
-            <body>
-                <h1>Human Verification</h1>
-                <form action="/verify" method="post">
-                    <label>What is 2 + 2?</label>
-                    <input name="answer" />
-                    <button type="submit">Submit</button>
-                </form>
-            </body>
-        </html>
-    "#;
-
-
-
-pub async fn verification_handler<R>(
+pub async fn verification_handler(
     form_data: web::Form<HashMap<String,String>>,
-    req:HttpRequest,
+    _req: HttpRequest,
     ) -> impl Responder 
     { 
 
     if let Some(raw_answer) = form_data.get("answer"){
         let answer : i32 = raw_answer.parse().unwrap();
         if answer == 4 {
+            return HttpResponse::Ok().body("Verification successful");
+        } else {
+            return HttpResponse::BadRequest().body("Incorrect answer");
         }
     }
      
     HttpResponse::Ok().body("POST to /verify-user-status")
 }
 
-pub async fn verification_page(req: HttpRequest) -> impl Responder{
-    let response = HttpResponse::new(StatusCode::from_u16(200).unwrap());
-    
-    response
+pub async fn verification_page(_req: HttpRequest) -> impl Responder{
+    // Read the verification page HTML
+    match fs::read_to_string("src/proxy_server/static_page/verify_page.html") {
+        Ok(content) => HttpResponse::Ok().content_type("text/html").body(content),
+        Err(_) => HttpResponse::InternalServerError().body("Could not load verification page")
+    }
 }
 
