@@ -41,11 +41,13 @@ pub async fn proxy_handler (
 
 
 async fn proxy_to_backend(req: &HttpRequest,body: web::Bytes,config: &ProxyConfig)-> HttpResponse{
+
     let awc_client = Client::default();
 
     let path = req.uri().path_and_query()
         .map(|p| { p.as_str()})
         .unwrap_or("/");
+
     let backend_url = format!("{}{}",config.backend_url,path);
 
     let mut backend_req = awc_client.request(req.method().clone(), backend_url);
@@ -76,10 +78,7 @@ async fn proxy_to_backend(req: &HttpRequest,body: web::Bytes,config: &ProxyConfi
             println!("Error in forwarding request to backend! {}",err);
         }
     }
-
-
-    HttpResponse::Ok().body("okay")
-
+    HttpResponse::Ok().body("FALLBACK")
 }
 
 
