@@ -12,7 +12,7 @@ pub struct ProxyConfig {
 impl Default for ProxyConfig {
     fn default() -> Self {
         ProxyConfig{
-            backend_url: "http://127.0.0.1:1234".to_string(),
+            backend_url:"http://127.0.0.1:1234".to_string(),
         }
     }
 }
@@ -27,20 +27,14 @@ pub async fn run_proxy_server()->io::Result<()>{
 
     let proxy_config = web::Data::new(ProxyConfig::default());
     HttpServer::new(move || {
-        App::new()
-            .service(
-                web::scope("")
-                .app_data(proxy_config.clone())
-                .route("/",
-                    web::get().to(proxy_handler))
-                .route("/",
-                    web::post().to(proxy_handler))
-                .route("/verify-user-status",
-                    web::post().to(verification_handler)) 
-                .route("/verification-page",
-                    web::get().to(verification_page)) 
-            )
-    }).bind((host,port.parse().unwrap()))?
+    App::new()
+        .app_data(proxy_config.clone())
+        .route("/verify-user-status", web::post().to(verification_handler))
+        .route("/verification-page", web::get().to(verification_page))
+        // Catch-all for GET and POST at any other path
+        .route("/{tail:.*}", web::get().to(proxy_handler))
+        .route("/{tail:.*}", web::post().to(proxy_handler))
+}).bind((host,port.parse().unwrap()))?
       .run()
       .await
 }
