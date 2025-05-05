@@ -5,7 +5,6 @@ use std::fs::File;
 use std::collections::HashMap;
 use std::io::Read;
 use chrono::Local; 
-use url::Url;
 use awc::Client;
 use super::ProxyConfig;
 
