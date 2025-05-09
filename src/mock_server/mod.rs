@@ -18,7 +18,7 @@ pub async fn run_mock_server()->io::Result<()>{
             .service(
                 web::scope("")
                 .route("/",
-                    web::get().to(mock_service_handler)),
+                    web::get().to(mock_service_handler))
             )
     }).bind((host,port.parse().unwrap()))?
       .run()

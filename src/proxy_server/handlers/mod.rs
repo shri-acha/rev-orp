@@ -7,7 +7,34 @@ use std::io::Read;
 use chrono::Local; 
 use awc::Client;
 use super::ProxyConfig;
+use ipnet::IpNet;
+use std::net::IpAddr;
 
+// To Implement 
+fn read_config(){}
+static ALLOWED_IPS: &[&str] = &[
+        "127.0.0.1/32", // ipv4 
+        "::1/128", // ipv6
+];
+
+fn is_ip_allowed(ip:IpAddr) -> bool{
+    ALLOWED_IPS.iter().any(|e|{
+        e.parse::<IpNet>()
+            .map(|net| net.contains(&ip) )
+            .unwrap_or(false)
+    })
+}
+
+fn extract_client_ip ( req: &HttpRequest )->Option<IpAddr>{ 
+    if let Some(forwarded_for) = req.headers().get("X-FORWARDED-FOR") {
+        if let Ok(ip_str) = forwarded_for.to_str() {
+            if let Some(ip_str) = ip_str.split(',').next() {
+                return ip_str.trim().parse().ok();
+            }
+        }
+    }
+    req.peer_addr().map(|sock|sock.ip())
+}
 
 
 
@@ -19,7 +46,15 @@ pub async fn proxy_handler (
     ) -> impl Responder 
     { 
     let curr_time = Local::now().format("(%H:%M:%S)");
-    println!("{}[REV-ORP] Incoming request to server:{:?}",curr_time,req);
+    println!("{}[REV-ORP] proxy - Incoming request to server:{:?}",curr_time,req);
+
+
+    if let Some(client_ip) = extract_client_ip(&req) {
+        if !is_ip_allowed(client_ip) {            
+            return HttpResponse::Forbidden().body("Forbidden Request")
+        }
+    }
+
 
     let cookie_verification_status = req.cookie("user_verified");
     if let Some(cookie_verification_status) = cookie_verification_status {
