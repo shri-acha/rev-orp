@@ -1,9 +1,12 @@
 mod handlers;
 
 use actix_web::{App, HttpServer,web};
-use handlers::{verification_handler,verification_page,proxy_handler};
+use handlers::{verification_handler,verification_page,proxy_handler,captcha_handler};
 use std::{io,env};
 use chrono::Local;
+use actix_session::{Session,SessionMiddleware,storage::CookieSessionStore};
+use uuid::Uuid;
+use actix_web::cookie::Key;
 
 
 pub struct ProxyConfig {
@@ -26,11 +29,19 @@ pub async fn run_proxy_server()->io::Result<()>{
     println!("{} Proxy - Server running http://{}:{}/",curr_time,host,port);
 
     let proxy_config = web::Data::new(ProxyConfig::default());
+    let key = Key::generate();
+
     HttpServer::new(move || {
     App::new()
         .app_data(proxy_config.clone())
+        .wrap(
+            SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
+                    .cookie_secure(false)
+                    .build()
+        )
         .route("/verify-user-status", web::post().to(verification_handler))
         .route("/verification-page", web::get().to(verification_page))
+        .route("/captcha/generate", web::get().to(captcha_handler))
         // Catch-all for GET and POST at any other path
         .route("/{tail:.*}", web::get().to(proxy_handler))
         .route("/{tail:.*}", web::post().to(proxy_handler))

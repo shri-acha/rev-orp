@@ -49,9 +49,9 @@
     <p>Please solve the math problem below to continue to the site:</p>
     
     <div class="captcha-container">
-        <div class="challenge">
-            <span id="num1">2</span> + <span id="num2">2</span> = ?
-        </div>
+      <div id="captcha">
+        <img id="captcha-image" src="/captcha/generate"></img>
+      </div>
         <form method="POST" action="/verify-user-status?redirect_to={{REDIRECT_TO}}">
             <input type="hidden" id="redirect_path" name="redirect_path"/>
             <input type="text" name="answer" placeholder="Answer" required />

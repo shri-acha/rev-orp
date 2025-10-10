@@ -1,31 +1,36 @@
+use super::ProxyConfig;
+use actix_session::Session;
 use actix_web::http::header::{self, LOCATION};
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use awc::cookie::Cookie;
-use std::fs::File;
-use std::collections::HashMap;
-use std::io::Read;
-use chrono::Local; 
 use awc::Client;
-use super::ProxyConfig;
+use captcha::filters::Dots;
+use captcha::{generate, Captcha};
+use captcha::filters::{Wave};
+use chrono::Local;
 use ipnet::IpNet;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Read;
 use std::net::IpAddr;
 
-// To Implement 
-fn read_config(){}
+// To Implement
+fn read_config() {}
 static ALLOWED_IPS: &[&str] = &[
-        "127.0.0.1/32", // ipv4 
-        "::1/128", // ipv6
+    "127.0.0.1/32", // ipv4
+    "::1/128",      // ipv6
 ];
 
-fn is_ip_allowed(ip:IpAddr) -> bool{
-    ALLOWED_IPS.iter().any(|e|{
+fn is_ip_allowed(ip: IpAddr) -> bool {
+    ALLOWED_IPS.iter().any(|e| {
         e.parse::<IpNet>()
-            .map(|net| net.contains(&ip) )
+            .map(|net| net.contains(&ip))
             .unwrap_or(false)
     })
 }
 
-fn extract_client_ip ( req: &HttpRequest )->Option<IpAddr>{ 
+fn extract_client_ip(req: &HttpRequest) -> Option<IpAddr> {
     if let Some(forwarded_for) = req.headers().get("X-FORWARDED-FOR") {
         if let Ok(ip_str) = forwarded_for.to_str() {
             if let Some(ip_str) = ip_str.split(',').next() {
@@ -33,152 +38,201 @@ fn extract_client_ip ( req: &HttpRequest )->Option<IpAddr>{
             }
         }
     }
-    req.peer_addr().map(|sock|sock.ip())
+    req.peer_addr().map(|sock| sock.ip())
 }
-
-
 
 //I'm unsure whether if to let the verification page store the request that is sent
 //by the user originally to the backend or if let the backend do its work.
-pub async fn proxy_handler (
-    req:HttpRequest,
-    config: web::Data<ProxyConfig>
-    ) -> impl Responder 
-    { 
+pub async fn proxy_handler(req: HttpRequest, config: web::Data<ProxyConfig>) -> impl Responder {
     let curr_time = Local::now().format("(%H:%M:%S)");
-    println!("{}[REV-ORP] proxy - Incoming request to server:{:?}",curr_time,req);
-
+    println!(
+        "{}[REV-ORP] proxy - Incoming request to server:{:?}",
+        curr_time, req
+    );
 
     if let Some(client_ip) = extract_client_ip(&req) {
-        if !is_ip_allowed(client_ip) {            
-            return HttpResponse::Forbidden().body("Forbidden Request")
+        if !is_ip_allowed(client_ip) {
+            return HttpResponse::Forbidden().body("Forbidden Request");
         }
     }
-
 
     let cookie_verification_status = req.cookie("user_verified");
     if let Some(cookie_verification_status) = cookie_verification_status {
-        if cookie_verification_status.value() == "true"{
-            proxy_to_backend(&req,actix_web::web::Bytes::new(),&config).await
-        }else {
+        if cookie_verification_status.value() == "true" {
+            proxy_to_backend(&req, actix_web::web::Bytes::new(), &config).await
+        } else {
             HttpResponse::Found()
-                .append_header((LOCATION,format!("/verification-page?redirect_to={}",req.uri())))
+                .append_header((
+                    LOCATION,
+                    format!("/verification-page?redirect_to={}", req.uri()),
+                ))
                 .finish()
         }
-    }else {
-            HttpResponse::Found()
-                .append_header((LOCATION,format!("/verification-page?redirect_to={}",req.uri())))
-                .finish()
-        }
-
-
+    } else {
+        HttpResponse::Found()
+            .append_header((
+                LOCATION,
+                format!("/verification-page?redirect_to={}", req.uri()),
+            ))
+            .finish()
+    }
 }
 
-
-async fn proxy_to_backend(req: &HttpRequest,body: web::Bytes,config: &ProxyConfig)-> HttpResponse{
-
+async fn proxy_to_backend(
+    req: &HttpRequest,
+    body: web::Bytes,
+    config: &ProxyConfig,
+) -> HttpResponse {
     let awc_client = Client::default();
 
-    let path = req.uri().path_and_query()
-        .map(|p| { p.as_str()})
+    let path = req
+        .uri()
+        .path_and_query()
+        .map(|p| p.as_str())
         .unwrap_or("/");
 
-    let backend_url = format!("{}{}",config.backend_url,path);
-
+    let backend_url = format!("{}{}", config.backend_url, path);
 
     let mut backend_req = awc_client.request(req.method().clone(), backend_url);
-    
-    for ( header_name, header_value) in req.headers().iter()
-        .filter(|(n,_)|{*n != "host"})
-        {
+
+    for (header_name, header_value) in req.headers().iter().filter(|(n, _)| *n != "host") {
         backend_req = backend_req.append_header((header_name.clone(), header_value.clone()));
     }
     match backend_req.send_body(body).await {
-        Ok(mut response)=>{
+        Ok(mut response) => {
             let mut client_resp = HttpResponse::build(response.status());
-            for (header_name,header_value) in response.headers().iter().filter(|(n,_)|{*n != "connection" || *n != "content-length" }) {
-                client_resp.append_header((header_name.clone(),header_value.clone()));
+            for (header_name, header_value) in response
+                .headers()
+                .iter()
+                .filter(|(n, _)| *n != "connection" || *n != "content-length")
+            {
+                client_resp.append_header((header_name.clone(), header_value.clone()));
             }
-        match response.body().await {
-            Ok(bytes) => {
-                return client_resp.body(bytes)
+            match response.body().await {
+                Ok(bytes) => return client_resp.body(bytes),
+                Err(_) => {
+                    HttpResponse::InternalServerError().body("Failed to reach backend!");
+                }
             }
-            Err(_)=>{
-                HttpResponse::InternalServerError().body("Failed to reach backend!");
-            }
-
-        }
         }
         Err(err) => {
-            println!("Error in forwarding request to backend! {}",err);
+            println!("Error in forwarding request to backend! {}", err);
         }
     }
     HttpResponse::Ok().body("FALLBACK")
 }
 
-fn inject_param(verification_page: String,injtbl_str:&str,inj_value:&str)->String{
-    verification_page.replace( injtbl_str , format!("action=\"/verify-user-status?redirect_to={}\"",inj_value).as_str())
+fn inject_param(verification_page: String, injtbl_str: &str, inj_value: &str) -> String {
+    verification_page.replace(
+        injtbl_str,
+        format!("action=\"/verify-user-status?redirect_to={}\"", inj_value).as_str(),
+    )
 }
 
-fn get_query_values<'a>(m_key:&str,req: HttpRequest)-> Option< (String,String) >{
+fn get_query_values<'a>(m_key: &str, req: HttpRequest) -> Option<(String, String)> {
     let query_list: Vec<_> = req.query_string().split('&').collect();
     let mut rdr_path: String = "/".to_string();
     for query in query_list {
-        let query_iter : Vec<_>= query.split('=').collect();
-        let (key,value) = (query_iter.get(0),query_iter.get(1));
-        if let (Some(key),Some(value)) = (key,value) {
+        let query_iter: Vec<_> = query.split('=').collect();
+        let (key, value) = (query_iter.get(0), query_iter.get(1));
+        if let (Some(key), Some(value)) = (key, value) {
             if *key == m_key {
-                return Some((key.to_string(),value.to_string()))
+                return Some((key.to_string(), value.to_string()));
             }
         };
     }
-        return None;
+    return None;
 }
 
-pub async fn verification_page(req: HttpRequest) -> impl Responder{
+pub async fn verification_page(req: HttpRequest) -> impl Responder {
     //Static Site Handler
-    let mut verification_page:String = String::new(); 
-    File::open("src/proxy_server/static_page/verify_page.html").unwrap().read_to_string(&mut verification_page).unwrap();
-   
+    let mut verification_page: String = String::new();
+
+    File::open("src/proxy_server/static_page/verify_page.html")
+        .unwrap()
+        .read_to_string(&mut verification_page)
+        .unwrap();
+
     let mut rdr_path: String = String::from("/");
-    if let Some((key,value)) =  get_query_values("redirect_to", req){
+    if let Some((key, value)) = get_query_values("redirect_to", req) {
         rdr_path = value;
     }
 
     // println!("{rdr_path}");
     let placeholder = "action=\"/verify-user-status?redirect_to={{REDIRECT_TO}}\"";
 
-    let verification_page = inject_param(verification_page,&placeholder,rdr_path.as_str());
+    let verification_page = inject_param(verification_page, &placeholder, rdr_path.as_str());
     let resp = HttpResponse::Ok().body(verification_page);
     resp
 }
-pub async fn verification_handler(form_data: web::Form<HashMap<String,String>>,req: HttpRequest)->impl Responder{
+#[derive(Serialize, Deserialize)]
+struct CaptchaResponse {
+    captcha: Vec<u8>,
+}
+
+pub async fn captcha_handler(_req: HttpRequest, session: Session) -> impl Responder {
+    let mut captcha_ins = 
+        captcha::Captcha::new();
+
+        captcha_ins.add_chars(5)
+        .apply_filter(Dots::new(10))
+        .view(220, 120)
+        .apply_filter(Dots::new(15))
+        .apply_filter(Wave::new(2.0, 20.0).horizontal());
+
+        let captcha_char = captcha_ins.chars_as_string();
+
+        println!("{captcha_char}");
+        let _ = session.insert("captcha_ins",captcha_char);
+
+    HttpResponse::Ok()
+        .content_type("image/png")
+        .body(captcha_ins.as_png().expect("Error Generating Captcha!"))
+}
+
+pub async fn verification_handler(
+    form_data: web::Form<HashMap<String, String>>,
+    req: HttpRequest,
+    session: Session,
+) -> impl Responder {
     // Handles the logic for captcha validation and post-validation.
-    if let Some(raw_answer) = form_data.get("answer"){
-        let answer : i32 = raw_answer.parse().unwrap_or_else(|_|{
-            -2
-        });
-        if  4 == answer {
-            let mut rdr_to:String = String::from("/");
-            if let Some((key,value)) = get_query_values("redirect_to", req){
-                rdr_to = value;
+        let mut answer: String=String::new();
+        let true_answer  = session.get::<String>("captcha_ins");
+        println!("[ENTRIES]:{:?}",session.entries());
+    if let Some(raw_answer) = form_data.get("answer") {
+        answer = raw_answer.to_string();
+
+
+        println!("Answer:{:?}\nInput:{:?}",true_answer,answer);
+
+        if let Ok(Some(true_answer)) = true_answer {
+
+            if answer == true_answer {
+                let mut rdr_to: String = String::from("/");
+                if let Some((key, value)) = get_query_values("redirect_to", req) {
+                    rdr_to = value;
+                }
+
+                HttpResponse::Found()
+                    .insert_header((LOCATION, rdr_to))
+                    .cookie(Cookie::build("user_verified", "true").finish())
+                    .finish()
+
+            }else {
+
+            HttpResponse::Forbidden()
+                .cookie(Cookie::build("user_verified", "false").finish())
+                .body("Captcha Failed!")
+
             }
-            HttpResponse::Found() 
-                .insert_header((LOCATION,rdr_to))
-                .cookie(Cookie::build("user_verified","true").finish())
-                .finish()
-        }else {
-
-            let mut resp =  HttpResponse::Forbidden();
-                resp.cookie(Cookie::build("user_verified","false").finish());
-                resp.body("Captcha Failed!");
-                resp.finish()
+        } else {
+            HttpResponse::Forbidden()
+            .cookie(Cookie::build("user_verified", "false").finish())
+            .body("Captcha Failed!")
         }
-    }else {
-            let mut resp =  HttpResponse::Forbidden();
-                resp.cookie(Cookie::build("user_verified","false").finish());
-                resp.body("Captcha Failed!");
-                resp.finish()
-        }
-
+    } else {
+       HttpResponse::Forbidden()
+        .cookie(Cookie::build("user_verified", "false").finish())
+        .body("Captcha Failed!")
+    }
 }
